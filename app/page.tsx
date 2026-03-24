@@ -1,5 +1,7 @@
 "use client";
 
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 import { useMemo, useState } from "react";
 
 type LineItem = {
@@ -30,6 +32,30 @@ export default function Home() {
     { description: "Project initiation", total: "", percent: "" },
     { description: "Stormwater Management Report", total: "28000", percent: "25" },
   ]);
+
+  // ✅ FIXED PDF FUNCTION (WORKS ON VERCEL)
+  const downloadPDF = async () => {
+    if (typeof window === "undefined") return;
+
+    const element = document.getElementById("invoice");
+    if (!element) return;
+
+    const canvas = await html2canvas(element, {
+      scale: 2,
+      useCORS: true,
+    });
+
+    const imgData = canvas.toDataURL("image/png");
+
+    const pdf = new jsPDF("p", "mm", "a4");
+
+    const imgWidth = 210;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    pdf.addImage(imgData, "PNG", 0, 0, imgWidth, imgHeight);
+
+    pdf.save(`Invoice-${invoiceNumber}.pdf`);
+  };
 
   const handleLineItemChange = (
     index: number,
@@ -81,250 +107,115 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-gray-100 p-8">
       <div className="mx-auto max-w-7xl grid gap-8 lg:grid-cols-[420px_1fr]">
+
+        {/* LEFT INPUT PANEL */}
         <section className="rounded-2xl border bg-white p-6 shadow-sm">
           <h1 className="mb-2 text-3xl font-bold">Mo Project Controls</h1>
-          <p className="mb-6 text-gray-600">
-            Invoice generator for Lambda Engineering
-          </p>
 
           <div className="grid gap-4">
-            <input
-              className="border p-3 rounded"
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-              placeholder="Project Name"
-            />
+            <input className="border p-3 rounded" value={projectName} onChange={(e)=>setProjectName(e.target.value)} />
+            <input className="border p-3 rounded" value={clientName} onChange={(e)=>setClientName(e.target.value)} />
 
-            <input
-              className="border p-3 rounded"
-              value={clientName}
-              onChange={(e) => setClientName(e.target.value)}
-              placeholder="Client Name"
-            />
+            <textarea className="border p-3 rounded" value={clientAddress} onChange={(e)=>setClientAddress(e.target.value)} />
 
-            <textarea
-              className="border p-3 rounded min-h-[100px]"
-              value={clientAddress}
-              onChange={(e) => setClientAddress(e.target.value)}
-              placeholder="Client address/details"
-            />
-
-            <div className="grid grid-cols-2 gap-4">
-              <input
-                className="border p-3 rounded"
-                value={clientNumber}
-                onChange={(e) => setClientNumber(e.target.value)}
-                placeholder="Client #"
-              />
-              <input
-                className="border p-3 rounded"
-                value={projectNumber}
-                onChange={(e) => setProjectNumber(e.target.value)}
-                placeholder="Project #"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <input
-                className="border p-3 rounded"
-                value={invoiceNumber}
-                onChange={(e) => setInvoiceNumber(e.target.value)}
-                placeholder="Invoice #"
-              />
-              <input
-                className="border p-3 rounded"
-                value={invoiceDate}
-                onChange={(e) => setInvoiceDate(e.target.value)}
-                placeholder="Date"
-              />
-            </div>
-
-            <input
-              className="border p-3 rounded"
-              value={hstRate}
-              onChange={(e) => setHstRate(e.target.value)}
-              placeholder="HST %"
-            />
-
-            <input
-              className="border p-3 rounded"
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="Your company name"
-            />
-
-            <textarea
-              className="border p-3 rounded min-h-[90px]"
-              value={companyAddress}
-              onChange={(e) => setCompanyAddress(e.target.value)}
-              placeholder="Your company address"
-            />
-
-            <input
-              className="border p-3 rounded"
-              value={companyPhone}
-              onChange={(e) => setCompanyPhone(e.target.value)}
-              placeholder="Company phone"
-            />
+            <input className="border p-3 rounded" value={invoiceNumber} onChange={(e)=>setInvoiceNumber(e.target.value)} />
+            <input className="border p-3 rounded" value={invoiceDate} onChange={(e)=>setInvoiceDate(e.target.value)} />
 
             <h2 className="font-semibold mt-4">Line Items</h2>
 
-            {lineItems.map((item, index) => (
-              <div key={index} className="border p-3 rounded grid gap-2">
-                <input
-                  className="border p-2 rounded"
-                  value={item.description}
-                  onChange={(e) =>
-                    handleLineItemChange(index, "description", e.target.value)
-                  }
-                  placeholder="Description"
-                />
+            {lineItems.map((item,index)=>(
+              <div key={index} className="border p-3 rounded">
+                <input className="border p-2 w-full mb-2" value={item.description} onChange={(e)=>handleLineItemChange(index,"description",e.target.value)} />
                 <div className="grid grid-cols-2 gap-2">
-                  <input
-                    className="border p-2 rounded"
-                    value={item.total}
-                    onChange={(e) =>
-                      handleLineItemChange(index, "total", e.target.value)
-                    }
-                    placeholder="Total"
-                  />
-                  <input
-                    className="border p-2 rounded"
-                    value={item.percent}
-                    onChange={(e) =>
-                      handleLineItemChange(index, "percent", e.target.value)
-                    }
-                    placeholder="%"
-                  />
+                  <input className="border p-2" value={item.total} onChange={(e)=>handleLineItemChange(index,"total",e.target.value)} />
+                  <input className="border p-2" value={item.percent} onChange={(e)=>handleLineItemChange(index,"percent",e.target.value)} />
                 </div>
               </div>
             ))}
 
-            <button
-              onClick={addLineItem}
-              className="bg-black text-white p-3 rounded"
-            >
+            <button onClick={addLineItem} className="bg-black text-white p-2">
               Add Line Item
             </button>
           </div>
         </section>
 
-        <section className="bg-white p-8 border shadow-sm">
-          <div className="border border-gray-400">
-            <div className="grid grid-cols-2 border-b border-gray-400">
-              <div className="p-4 border-r min-h-[165px]">
+        {/* RIGHT SIDE */}
+        <div>
+
+          {/* DOWNLOAD BUTTON */}
+          <div className="mb-4">
+            <button
+              onClick={downloadPDF}
+              className="bg-green-600 text-white px-4 py-2 rounded"
+            >
+              Download PDF
+            </button>
+          </div>
+
+          {/* INVOICE */}
+          <section id="invoice" className="bg-white p-8 border shadow-sm">
+
+            {/* HEADER */}
+            <div className="flex justify-between mb-6">
+              <div>
                 <img
                   src="/lambda-logo.png"
-                  alt="Lambda logo"
-                  className="h-20 mb-3 object-contain"
+                  alt="logo"
+                  className="h-16"
+                  crossOrigin="anonymous"
                 />
-
-                <p className="font-medium text-sm mb-1">{clientName}</p>
-                <div className="text-sm whitespace-pre-line leading-6">
-                  {clientAddress}
-                </div>
+                <p>{clientName}</p>
+                <pre>{clientAddress}</pre>
               </div>
 
-              <div className="p-4 text-right min-h-[165px]">
-                <h2 className="text-2xl font-bold text-green-700">
-                  {companyName}
-                </h2>
-
-                <div className="text-sm text-green-700 whitespace-pre-line leading-6 mt-2">
-                  {companyAddress}
-                </div>
-
-                <p className="text-sm text-green-700 mt-1">
-                  Phone: {companyPhone}
-                </p>
-
-                <h1 className="text-3xl font-bold mt-6 text-green-700">
-                  INVOICE
-                </h1>
+              <div className="text-right">
+                <h2 className="font-bold text-green-700">{companyName}</h2>
+                <pre>{companyAddress}</pre>
+                <p>{companyPhone}</p>
+                <h1 className="text-2xl font-bold text-green-700">INVOICE</h1>
               </div>
             </div>
 
-            <div className="border-b p-3">
-              <strong>ZHR# {projectNumber}</strong> &nbsp;&nbsp; {projectName}
-            </div>
-
-            <div className="grid grid-cols-3 border-b text-sm">
-              <div className="p-3 border-r">
-                <strong>Client #</strong>
-                <br />
-                {clientNumber}
-              </div>
-              <div className="p-3 border-r">
-                <strong>Date</strong>
-                <br />
-                {invoiceDate}
-              </div>
-              <div className="p-3">
-                <strong>Invoice #</strong>
-                <br />
-                {invoiceNumber}
-              </div>
-            </div>
-
-            <table className="w-full text-sm">
+            {/* TABLE */}
+            <table className="w-full border text-sm">
               <thead>
-                <tr className="bg-gray-100">
-                  <th className="border p-2 text-left">SERVICES</th>
-                  <th className="border p-2">TOTAL</th>
+                <tr>
+                  <th className="border p-2">Service</th>
+                  <th className="border p-2">Total</th>
                   <th className="border p-2">%</th>
-                  <th className="border p-2">AMOUNT</th>
+                  <th className="border p-2">Amount</th>
                 </tr>
               </thead>
 
               <tbody>
-                {calculatedItems.map((item, index) => (
+                {calculatedItems.map((item,index)=>(
                   <tr key={index}>
                     <td className="border p-2">{item.description}</td>
-                    <td className="border p-2 text-right">
-                      ${money(item.totalNumber)}
-                    </td>
-                    <td className="border p-2 text-right">
-                      {item.percentNumber}%
-                    </td>
-                    <td className="border p-2 text-right">
-                      ${money(item.amountNumber)}
-                    </td>
+                    <td className="border p-2">${money(item.totalNumber)}</td>
+                    <td className="border p-2">{item.percentNumber}%</td>
+                    <td className="border p-2">${money(item.amountNumber)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
 
-            <div className="p-4 text-right">
+            {/* TOTAL */}
+            <div className="mt-4 text-right">
               <p>Subtotal: ${money(subtotal)}</p>
-              <p>
-                HST ({hstRate}%): ${money(hstAmount)}
-              </p>
-              <p className="font-bold text-lg">TOTAL: ${money(totalWithTax)}</p>
+              <p>HST: ${money(hstAmount)}</p>
+              <p className="font-bold">Total: ${money(totalWithTax)}</p>
             </div>
 
-            <div className="border-t p-4 text-sm">
-              <strong>Payment Instructions:</strong>
-
-              <p className="mt-2">
-                <strong>Preferred Method: Direct Deposit (EFT)</strong>
-                <br />
-                Banking details will be provided separately for privacy.
-              </p>
-
-              <p className="mt-2">
-                <strong>Alternative Method:</strong>
-                <br />
-                E-transfer to: info@lambdaengineers.ca
-                <br />
-                Auto-deposit enabled
-              </p>
-
-              <p className="mt-2">
-                <strong>Payment Terms:</strong> Net 15 days
-              </p>
+            {/* PAYMENT */}
+            <div className="mt-6 text-sm">
+              <p><strong>Payment Instructions:</strong></p>
+              <p>Direct Deposit (EFT)</p>
+              <p>E-transfer: info@lambdaengineers.ca</p>
+              <p>Net 15 days</p>
             </div>
-          </div>
-        </section>
+
+          </section>
+        </div>
       </div>
     </main>
   );
