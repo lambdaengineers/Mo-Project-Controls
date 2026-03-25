@@ -5,11 +5,13 @@ import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import { supabase } from "../lib/supabase";
 
+type CalcType = "percent" | "multiply";
+
 type LineItem = {
   description: string;
   total: string;
   value: string;
-  calcType: "percent" | "multiply";
+  calcType: CalcType;
   valueLabel: string;
 };
 
@@ -28,6 +30,9 @@ type SavedInvoice = {
   company_address: string | null;
   company_phone: string | null;
   third_column_header: string | null;
+  root_invoice_number: string | null;
+  revision_number: number | null;
+  parent_invoice_id: string | null;
   line_items: any[] | null;
   subtotal: number | null;
   hst_amount: number | null;
@@ -43,7 +48,7 @@ export default function Home() {
   const [clientNumber, setClientNumber] = useState("301");
   const [projectNumber, setProjectNumber] = useState("0301");
   const [invoiceNumber, setInvoiceNumber] = useState("0301-001");
-  const [invoiceDate, setInvoiceDate] = useState("3-10-2026");
+  const [invoiceDate, setInvoiceDate] = useState("3-24-2026");
   const [hstRate, setHstRate] = useState("13");
 
   const [companyName, setCompanyName] = useState("LAMBDA ENGINEERING INC.");
@@ -52,22 +57,22 @@ export default function Home() {
   );
   const [companyPhone, setCompanyPhone] = useState("6474684321");
 
-  const [thirdColumnHeader, setThirdColumnHeader] = useState("Unit");
+  const [thirdColumnHeader, setThirdColumnHeader] = useState("% of total");
 
   const [lineItems, setLineItems] = useState<LineItem[]>([
-    {
-      description: "Project initiation",
-      total: "",
-      value: "",
-      calcType: "percent",
-      valueLabel: "Unit",
-    },
     {
       description: "Stormwater Management Report",
       total: "28000",
       value: "25",
       calcType: "percent",
-      valueLabel: "Unit",
+      valueLabel: "% of total",
+    },
+    {
+      description: "Traffic Impact Assessment",
+      total: "4500",
+      value: "25",
+      calcType: "percent",
+      valueLabel: "% of total",
     },
   ]);
 
@@ -78,13 +83,21 @@ export default function Home() {
   const [isLoadingInvoices, setIsLoadingInvoices] = useState(false);
   const [loadMessage, setLoadMessage] = useState("");
 
+  const [loadedInvoiceId, setLoadedInvoiceId] = useState<string | null>(null);
+  const [loadedRootInvoiceNumber, setLoadedRootInvoiceNumber] = useState<string | null>(null);
+  const [loadedRevisionNumber, setLoadedRevisionNumber] = useState<number>(0);
+
   const handleLineItemChange = (
     index: number,
     field: keyof LineItem,
     value: string
   ) => {
     const updated = [...lineItems];
-    updated[index][field] = value as never;
+    if (field === "calcType") {
+      updated[index][field] = value as CalcType;
+    } else {
+      updated[index][field] = value as never;
+    }
     setLineItems(updated);
   };
 
@@ -96,7 +109,7 @@ export default function Home() {
         total: "",
         value: "",
         calcType: "percent",
-        valueLabel: thirdColumnHeader || "Unit",
+        valueLabel: thirdColumnHeader || "% of total",
       },
     ]);
   };
@@ -112,7 +125,7 @@ export default function Home() {
               total: "",
               value: "",
               calcType: "percent",
-              valueLabel: thirdColumnHeader || "Unit",
+              valueLabel: thirdColumnHeader || "% of total",
             },
           ]
     );
@@ -122,7 +135,6 @@ export default function Home() {
     return lineItems.map((item) => {
       const total = Number(item.total) || 0;
       const value = Number(item.value) || 0;
-
       const amount =
         item.calcType === "percent" ? total * (value / 100) : total * value;
 
@@ -152,6 +164,12 @@ export default function Home() {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
+
+  const clearLoadedInvoiceContext = () => {
+    setLoadedInvoiceId(null);
+    setLoadedRootInvoiceNumber(null);
+    setLoadedRevisionNumber(0);
+  };
 
   const loadSavedInvoices = async () => {
     try {
@@ -188,13 +206,19 @@ export default function Home() {
     setClientAddress(invoice.client_address || "");
     setClientNumber(invoice.client_number || "");
     setProjectNumber(invoice.project_number || "");
-    setInvoiceNumber(invoice.invoice_number || "");
+    setInvoiceNumber(invoice.root_invoice_number || invoice.invoice_number || "");
     setInvoiceDate(invoice.invoice_date || "");
     setHstRate(String(invoice.hst_rate ?? 13));
     setCompanyName(invoice.company_name || "");
     setCompanyAddress(invoice.company_address || "");
     setCompanyPhone(invoice.company_phone || "");
-    setThirdColumnHeader(invoice.third_column_header || "Unit");
+    setThirdColumnHeader(invoice.third_column_header || "% of total");
+
+    setLoadedInvoiceId(invoice.id || null);
+    setLoadedRootInvoiceNumber(
+      invoice.root_invoice_number || invoice.invoice_number || null
+    );
+    setLoadedRevisionNumber(invoice.revision_number || 0);
 
     const loadedItems =
       invoice.line_items && invoice.line_items.length
@@ -202,21 +226,22 @@ export default function Home() {
             description: item.description || "",
             total: String(item.total ?? ""),
             value: String(item.value ?? item.percent ?? ""),
-            calcType:
-              (item.calcType === "multiply" ? "multiply" : "percent") as "percent" | "multiply",
+            calcType: (
+              item.calcType === "multiply" ? "multiply" : "percent"
+            ) as CalcType,
             valueLabel:
               item.valueLabel ||
               item.label ||
               invoice.third_column_header ||
-              "Unit",
+              "% of total",
           }))
         : [
             {
               description: "",
               total: "",
               value: "",
-              calcType: "percent" as const,
-              valueLabel: invoice.third_column_header || "Unit",
+              calcType: "percent" as CalcType,
+              valueLabel: invoice.third_column_header || "% of total",
             },
           ];
 
@@ -224,10 +249,29 @@ export default function Home() {
     setLoadMessage(`Loaded invoice ${invoice.invoice_number || ""}.`);
   };
 
-  const saveInvoice = async () => {
+  const saveInvoice = async (mode: "new" | "revision") => {
     try {
       setIsSaving(true);
       setSaveMessage("");
+
+      let rootInvoiceNumber = invoiceNumber;
+      let revisionNumber = 0;
+      let parentInvoiceId: string | null = null;
+      let finalInvoiceNumber = invoiceNumber;
+
+      if (mode === "revision" && loadedInvoiceId) {
+        rootInvoiceNumber = loadedRootInvoiceNumber || invoiceNumber;
+        revisionNumber = (loadedRevisionNumber || 0) + 1;
+        parentInvoiceId = loadedInvoiceId;
+        finalInvoiceNumber = `${rootInvoiceNumber} Rev ${revisionNumber}`;
+      }
+
+      if (mode === "new") {
+        rootInvoiceNumber = invoiceNumber;
+        revisionNumber = 0;
+        parentInvoiceId = null;
+        finalInvoiceNumber = invoiceNumber;
+      }
 
       const payload = {
         project_name: projectName,
@@ -235,13 +279,16 @@ export default function Home() {
         client_address: clientAddress,
         client_number: clientNumber,
         project_number: projectNumber,
-        invoice_number: invoiceNumber,
+        invoice_number: finalInvoiceNumber,
         invoice_date: invoiceDate,
         hst_rate: Number(hstRate) || 0,
         company_name: companyName,
         company_address: companyAddress,
         company_phone: companyPhone,
         third_column_header: thirdColumnHeader,
+        root_invoice_number: rootInvoiceNumber,
+        revision_number: revisionNumber,
+        parent_invoice_id: parentInvoiceId,
         line_items: calculatedItems.map((item) => ({
           description: item.description,
           total: item.totalNumber,
@@ -263,7 +310,19 @@ export default function Home() {
         return;
       }
 
-      setSaveMessage("Invoice saved successfully.");
+      setSaveMessage(
+        mode === "revision"
+          ? "Revision saved successfully."
+          : "Invoice saved successfully."
+      );
+
+      if (mode === "new") {
+        clearLoadedInvoiceContext();
+      } else {
+        setLoadedRevisionNumber(revisionNumber);
+        setLoadedRootInvoiceNumber(rootInvoiceNumber);
+      }
+
       await loadSavedInvoices();
     } catch (error) {
       console.error("Unexpected save error:", error);
@@ -317,14 +376,12 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-gray-100 p-6">
-      <div className="mx-auto grid max-w-[1800px] gap-6 lg:grid-cols-[340px_430px_1fr]">
+      <div className="mx-auto grid max-w-[1850px] gap-6 lg:grid-cols-[320px_430px_1fr]">
         <section className="rounded-2xl border border-gray-300 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="text-xl font-bold">Saved Invoices</h2>
-              <p className="text-sm text-gray-600">
-                Load previous invoices into the form
-              </p>
+              <p className="text-sm text-gray-600">Load previous invoices</p>
             </div>
             <button
               onClick={loadSavedInvoices}
@@ -362,8 +419,11 @@ export default function Home() {
                   <div className="text-sm text-gray-500">
                     {invoice.invoice_date || ""}
                   </div>
-                  <div className="mt-2 text-sm text-gray-500">
-                    {invoice.project_name || ""}
+                  <div className="mt-1 text-xs text-gray-500">
+                    Root: {invoice.root_invoice_number || invoice.invoice_number || "-"}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    Revision: {invoice.revision_number ?? 0}
                   </div>
                   <button
                     onClick={() => loadInvoiceIntoForm(invoice)}
@@ -467,7 +527,7 @@ export default function Home() {
               className="rounded border border-gray-400 p-3"
               value={thirdColumnHeader}
               onChange={(e) => setThirdColumnHeader(e.target.value)}
-              placeholder="Third column header (e.g. Unit, Hours)"
+              placeholder="Third column header (e.g. % of total, Hours)"
             />
 
             <h2 className="mt-3 text-lg font-semibold">Line Items</h2>
@@ -516,11 +576,7 @@ export default function Home() {
                     className="rounded border border-gray-400 p-2"
                     value={item.calcType}
                     onChange={(e) =>
-                      handleLineItemChange(
-                        index,
-                        "calcType",
-                        e.target.value as "percent" | "multiply"
-                      )
+                      handleLineItemChange(index, "calcType", e.target.value)
                     }
                   >
                     <option value="percent">Percent</option>
@@ -533,7 +589,7 @@ export default function Home() {
                     onChange={(e) =>
                       handleLineItemChange(index, "valueLabel", e.target.value)
                     }
-                    placeholder="Label e.g. Unit, Hours"
+                    placeholder="Label e.g. % of total, Hours"
                   />
                 </div>
               </div>
@@ -549,13 +605,21 @@ export default function Home() {
         </section>
 
         <div>
-          <div className="mb-4 flex items-center gap-3">
+          <div className="mb-4 flex flex-wrap items-center gap-3">
             <button
-              onClick={saveInvoice}
+              onClick={() => saveInvoice("new")}
               disabled={isSaving}
               className="rounded bg-blue-600 px-4 py-3 font-semibold text-white disabled:opacity-60"
             >
-              {isSaving ? "Saving..." : "Save Invoice"}
+              {isSaving ? "Saving..." : "Save as New"}
+            </button>
+
+            <button
+              onClick={() => saveInvoice("revision")}
+              disabled={isSaving || !loadedInvoiceId}
+              className="rounded bg-amber-600 px-4 py-3 font-semibold text-white disabled:opacity-60"
+            >
+              Save Revision
             </button>
 
             <button
@@ -574,240 +638,253 @@ export default function Home() {
 
           <section
             id="invoice"
-            className="bg-white p-8 shadow-sm"
+            className="bg-white shadow-sm"
             style={{
               width: "100%",
               maxWidth: "1050px",
               margin: "0 auto",
-              border: "1px solid #999",
+              border: "2px solid #000",
+              padding: "12px",
+              background: "#fff",
               fontFamily: "Arial, sans-serif",
               color: "#111",
             }}
           >
             <div
               style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1.15fr",
-                borderBottom: "1px solid #999",
-                minHeight: "210px",
-              }}
-            >
-              <div style={{ padding: "18px", borderRight: "1px solid #999" }}>
-                <img
-                  src="/lambda-logo.png"
-                  alt="Lambda logo"
-                  crossOrigin="anonymous"
-                  style={{
-                    height: "110px",
-                    objectFit: "contain",
-                    marginBottom: "14px",
-                  }}
-                />
-
-                <div style={{ fontSize: "13px", lineHeight: "1.45" }}>
-                  <div style={{ fontWeight: 600, marginBottom: "6px" }}>
-                    {clientName}
-                  </div>
-                  <div style={{ whiteSpace: "pre-line" }}>{clientAddress}</div>
-                </div>
-              </div>
-
-              <div style={{ padding: "18px", textAlign: "right" }}>
-                <div
-                  style={{
-                    fontSize: "24px",
-                    fontWeight: 700,
-                    color: "#2f6f1f",
-                    lineHeight: "1.2",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {companyName}
-                </div>
-
-                <div
-                  style={{
-                    marginTop: "8px",
-                    fontSize: "13px",
-                    lineHeight: "1.5",
-                    color: "#2f6f1f",
-                    whiteSpace: "pre-line",
-                  }}
-                >
-                  {companyAddress}
-                </div>
-
-                <div
-                  style={{
-                    marginTop: "2px",
-                    fontSize: "13px",
-                    color: "#2f6f1f",
-                  }}
-                >
-                  Phone: {companyPhone}
-                </div>
-
-                <div
-                  style={{
-                    marginTop: "46px",
-                    fontSize: "26px",
-                    fontWeight: 700,
-                    color: "#2f6f1f",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Invoice
-                </div>
-              </div>
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1.8fr 0.7fr 0.7fr 0.7fr",
-                borderBottom: "1px solid #999",
-                fontSize: "13px",
+                border: "1px solid rgb(116, 204, 0)",
+                minHeight: "100%",
               }}
             >
               <div
                 style={{
-                  padding: "10px 12px",
-                  borderRight: "1px solid #999",
-                  fontWeight: 700,
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1.15fr",
+                  borderBottom: "1px solid #999",
+                  minHeight: "210px",
                 }}
               >
-                ZHR#&nbsp; {projectNumber} &nbsp;&nbsp;&nbsp; {projectName}
-              </div>
-              <div
-                style={{ padding: "10px 12px", borderRight: "1px solid #999" }}
-              >
-                <div style={{ fontWeight: 700 }}>Client #</div>
-                <div style={{ marginTop: "6px" }}>{clientNumber}</div>
-              </div>
-              <div
-                style={{ padding: "10px 12px", borderRight: "1px solid #999" }}
-              >
-                <div style={{ fontWeight: 700 }}>Date</div>
-                <div style={{ marginTop: "6px" }}>{invoiceDate}</div>
-              </div>
-              <div style={{ padding: "10px 12px" }}>
-                <div style={{ fontWeight: 700 }}>Invoice #</div>
-                <div style={{ marginTop: "6px" }}>{invoiceNumber}</div>
-              </div>
-            </div>
+                <div style={{ padding: "18px", borderRight: "1px solid #999" }}>
+                  <img
+                    src="/lambda-logo.png"
+                    alt="Lambda logo"
+                    crossOrigin="anonymous"
+                    style={{
+                      height: "80px",
+                      objectFit: "contain",
+                      marginBottom: "24px",
+                    }}
+                  />
 
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                fontSize: "13px",
-              }}
-            >
-              <thead>
-                <tr style={{ background: "#f3f3f3" }}>
-                  <th
-                    style={{
-                      borderBottom: "1px solid #999",
-                      borderRight: "1px solid #999",
-                      padding: "8px",
-                      textAlign: "left",
-                      fontStyle: "italic",
-                      width: "52%",
-                    }}
-                  >
-                    SERVICES RENDERED
-                  </th>
-                  <th
-                    style={{
-                      borderBottom: "1px solid #999",
-                      borderRight: "1px solid #999",
-                      padding: "8px",
-                      textAlign: "center",
-                      width: "16%",
-                    }}
-                  >
-                    Total
-                  </th>
-                  <th
-                    style={{
-                      borderBottom: "1px solid #999",
-                      borderRight: "1px solid #999",
-                      padding: "8px",
-                      textAlign: "center",
-                      width: "12%",
-                    }}
-                  >
-                    {thirdColumnHeader}
-                  </th>
-                  <th
-                    style={{
-                      borderBottom: "1px solid #999",
-                      padding: "8px",
-                      textAlign: "center",
-                      width: "20%",
-                    }}
-                  >
-                    AMOUNT
-                  </th>
-                </tr>
-              </thead>
+                  <div style={{ fontSize: "13px", lineHeight: "1.45" }}>
+                    <div style={{ fontWeight: 600, marginBottom: "6px" }}>
+                      {clientName}
+                    </div>
+                    <div style={{ whiteSpace: "pre-line" }}>{clientAddress}</div>
+                  </div>
+                </div>
 
-              <tbody>
-                {calculatedItems.map((item, index) => (
-                  <tr key={index}>
-                    <td
+                <div style={{ padding: "18px", textAlign: "right" }}>
+                  <div
+                    style={{
+                      fontSize: "24px",
+                      fontWeight: 700,
+                      color: "#2f6f1f",
+                      lineHeight: "1.2",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {companyName}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: "8px",
+                      fontSize: "13px",
+                      lineHeight: "1.5",
+                      color: "#2f6f1f",
+                      whiteSpace: "pre-line",
+                    }}
+                  >
+                    {companyAddress}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: "2px",
+                      fontSize: "13px",
+                      color: "#2f6f1f",
+                    }}
+                  >
+                    Phone: {companyPhone}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: "46px",
+                      fontSize: "26px",
+                      fontWeight: 700,
+                      color: "#2f6f1f",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Invoice
+                  </div>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1.8fr 0.7fr 0.7fr 0.7fr",
+                  borderBottom: "1px solid #999",
+                  fontSize: "13px",
+                }}
+              >
+                <div
+                  style={{
+                    padding: "10px 12px",
+                    borderRight: "1px solid #999",
+                    fontWeight: 700,
+                  }}
+                >
+                  ZHR#&nbsp; {projectNumber} &nbsp;&nbsp;&nbsp; {projectName}
+                </div>
+                <div
+                  style={{ padding: "10px 12px", borderRight: "1px solid #999" }}
+                >
+                  <div style={{ fontWeight: 700 }}>Client #</div>
+                  <div style={{ marginTop: "6px" }}>{clientNumber}</div>
+                </div>
+                <div
+                  style={{ padding: "10px 12px", borderRight: "1px solid #999" }}
+                >
+                  <div style={{ fontWeight: 700 }}>Date</div>
+                  <div style={{ marginTop: "6px" }}>{invoiceDate}</div>
+                </div>
+                <div style={{ padding: "10px 12px" }}>
+                  <div style={{ fontWeight: 700 }}>Invoice #</div>
+                  <div style={{ marginTop: "6px" }}>
+                    {loadedInvoiceId && loadedRevisionNumber > 0
+                      ? `${invoiceNumber} Rev ${loadedRevisionNumber}`
+                      : invoiceNumber}
+                  </div>
+                </div>
+              </div>
+
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: "13px",
+                }}
+              >
+                <thead>
+                  <tr style={{ background: "#f3f3f3" }}>
+                    <th
                       style={{
-                        borderBottom: "1px solid #ccc",
+                        borderBottom: "1px solid #999",
                         borderRight: "1px solid #999",
-                        padding: "7px 8px",
-                        verticalAlign: "top",
+                        padding: "8px",
+                        textAlign: "left",
+                        fontStyle: "italic",
+                        width: "52%",
                       }}
                     >
-                      {item.description}
-                    </td>
-                    <td
+                      SERVICES RENDERED
+                    </th>
+                    <th
                       style={{
-                        borderBottom: "1px solid #ccc",
+                        borderBottom: "1px solid #999",
                         borderRight: "1px solid #999",
-                        padding: "7px 8px",
-                        textAlign: "right",
-                        verticalAlign: "top",
+                        padding: "8px",
+                        textAlign: "center",
+                        width: "16%",
                       }}
                     >
-                      {item.totalNumber > 0 ? `$${money(item.totalNumber)}` : ""}
-                    </td>
-                    <td
+                      Total
+                    </th>
+                    <th
                       style={{
-                        borderBottom: "1px solid #ccc",
+                        borderBottom: "1px solid #999",
                         borderRight: "1px solid #999",
-                        padding: "7px 8px",
-                        textAlign: "right",
-                        verticalAlign: "top",
+                        padding: "8px",
+                        textAlign: "center",
+                        width: "12%",
                       }}
                     >
-                      {item.valueNumber > 0
-                        ? item.calcType === "percent"
-                          ? `${item.valueNumber}%`
-                          : `${item.valueNumber}`
-                        : ""}
-                    </td>
-                    <td
+                      {thirdColumnHeader}
+                    </th>
+                    <th
                       style={{
-                        borderBottom: "1px solid #ccc",
-                        padding: "7px 8px",
-                        textAlign: "right",
-                        verticalAlign: "top",
+                        borderBottom: "1px solid #999",
+                        padding: "8px",
+                        textAlign: "center",
+                        width: "20%",
                       }}
                     >
-                      {item.amountNumber > 0
-                        ? `$${money(item.amountNumber)}`
-                        : ""}
-                    </td>
+                      AMOUNT
+                    </th>
                   </tr>
-                ))}
+                </thead>
 
-                {Array.from({ length: Math.max(0, 8 - calculatedItems.length) }).map(
-                  (_, idx) => (
+                <tbody>
+                  {calculatedItems.map((item, index) => (
+                    <tr key={index}>
+                      <td
+                        style={{
+                          borderBottom: "1px solid #ccc",
+                          borderRight: "1px solid #999",
+                          padding: "7px 8px",
+                          verticalAlign: "top",
+                        }}
+                      >
+                        {item.description}
+                      </td>
+                      <td
+                        style={{
+                          borderBottom: "1px solid #ccc",
+                          borderRight: "1px solid #999",
+                          padding: "7px 8px",
+                          textAlign: "right",
+                          verticalAlign: "top",
+                        }}
+                      >
+                        {item.totalNumber > 0 ? `$${money(item.totalNumber)}` : ""}
+                      </td>
+                      <td
+                        style={{
+                          borderBottom: "1px solid #ccc",
+                          borderRight: "1px solid #999",
+                          padding: "7px 8px",
+                          textAlign: "right",
+                          verticalAlign: "top",
+                        }}
+                      >
+                        {item.valueNumber > 0
+                          ? item.calcType === "percent"
+                            ? `${item.valueNumber}%`
+                            : `${item.valueNumber}`
+                          : ""}
+                      </td>
+                      <td
+                        style={{
+                          borderBottom: "1px solid #ccc",
+                          padding: "7px 8px",
+                          textAlign: "right",
+                          verticalAlign: "top",
+                        }}
+                      >
+                        {item.amountNumber > 0
+                          ? `$${money(item.amountNumber)}`
+                          : ""}
+                      </td>
+                    </tr>
+                  ))}
+
+                  {Array.from({
+                    length: Math.max(0, 8 - calculatedItems.length),
+                  }).map((_, idx) => (
                     <tr key={`blank-${idx}`}>
                       <td
                         style={{
@@ -830,115 +907,116 @@ export default function Home() {
                       />
                       <td style={{ borderBottom: "1px solid #eee" }} />
                     </tr>
-                  )
-                )}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 340px",
-                minHeight: "180px",
-              }}
-            >
-              <div style={{ borderRight: "1px solid #999" }} />
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 340px",
+                  minHeight: "180px",
+                }}
+              >
+                <div style={{ borderRight: "1px solid #999" }} />
 
-              <div>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    fontSize: "15px",
-                  }}
-                >
+                <div>
                   <div
                     style={{
-                      padding: "10px 14px",
-                      borderBottom: "1px solid #ddd",
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      fontSize: "15px",
                     }}
                   >
-                    Subtotal
-                  </div>
-                  <div
-                    style={{
-                      padding: "10px 14px",
-                      borderBottom: "1px solid #ddd",
-                      textAlign: "right",
-                    }}
-                  >
-                    ${money(subtotal)}
-                  </div>
+                    <div
+                      style={{
+                        padding: "10px 14px",
+                        borderBottom: "1px solid #ddd",
+                      }}
+                    >
+                      Subtotal
+                    </div>
+                    <div
+                      style={{
+                        padding: "10px 14px",
+                        borderBottom: "1px solid #ddd",
+                        textAlign: "right",
+                      }}
+                    >
+                      ${money(subtotal)}
+                    </div>
 
-                  <div
-                    style={{
-                      padding: "10px 14px",
-                      borderBottom: "1px solid #ddd",
-                    }}
-                  >
-                    HST ({hstRate}%)
-                  </div>
-                  <div
-                    style={{
-                      padding: "10px 14px",
-                      borderBottom: "1px solid #ddd",
-                      textAlign: "right",
-                    }}
-                  >
-                    ${money(hstAmount)}
-                  </div>
+                    <div
+                      style={{
+                        padding: "10px 14px",
+                        borderBottom: "1px solid #ddd",
+                      }}
+                    >
+                      HST ({hstRate}%)
+                    </div>
+                    <div
+                      style={{
+                        padding: "10px 14px",
+                        borderBottom: "1px solid #ddd",
+                        textAlign: "right",
+                      }}
+                    >
+                      ${money(hstAmount)}
+                    </div>
 
-                  <div
-                    style={{
-                      padding: "12px 14px",
-                      fontSize: "19px",
-                      fontWeight: 700,
-                    }}
-                  >
-                    TOTAL
-                  </div>
-                  <div
-                    style={{
-                      padding: "12px 14px",
-                      fontSize: "19px",
-                      fontWeight: 700,
-                      textAlign: "right",
-                    }}
-                  >
-                    ${money(totalWithTax)}
+                    <div
+                      style={{
+                        padding: "12px 14px",
+                        fontSize: "19px",
+                        fontWeight: 700,
+                      }}
+                    >
+                      TOTAL
+                    </div>
+                    <div
+                      style={{
+                        padding: "12px 14px",
+                        fontSize: "19px",
+                        fontWeight: 700,
+                        textAlign: "right",
+                      }}
+                    >
+                      ${money(totalWithTax)}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            <div
-              style={{
-                borderTop: "1px solid #999",
-                padding: "18px 22px",
-                fontSize: "14px",
-                lineHeight: "1.55",
-              }}
-            >
-              <div style={{ fontWeight: 700, marginBottom: "8px" }}>
-                Payment Instructions:
-              </div>
+              <div
+                style={{
+                  borderTop: "1px solid #999",
+                  padding: "18px 22px",
+                  fontSize: "14px",
+                  lineHeight: "1.55",
+                  minHeight: "180px",
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: "8px" }}>
+                  Payment Instructions:
+                </div>
 
-              <div style={{ marginBottom: "8px" }}>
-                <strong>Preferred Method: Direct Deposit (EFT)</strong>
-                <br />
-                Banking details will be provided separately for privacy.
-              </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <strong>Preferred Method: Direct Deposit (EFT)</strong>
+                  <br />
+                  Banking details will be provided separately for privacy.
+                </div>
 
-              <div style={{ marginBottom: "8px" }}>
-                <strong>Alternative Method:</strong>
-                <br />
-                E-transfer to: info@lambdaengineers.ca
-                <br />
-                Auto-deposit enabled
-              </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <strong>Alternative Method:</strong>
+                  <br />
+                  E-transfer to: info@lambdaengineers.ca
+                  <br />
+                  Auto-deposit enabled
+                </div>
 
-              <div>
-                <strong>Payment Terms:</strong> Net 15 days
+                <div>
+                  <strong>Payment Terms:</strong> Net 15 days
+                </div>
               </div>
             </div>
           </section>
