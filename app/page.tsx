@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import { supabase } from "../lib/supabase";
@@ -8,7 +8,30 @@ import { supabase } from "../lib/supabase";
 type LineItem = {
   description: string;
   total: string;
-  percent: string;
+  value: string;
+  calcType: "percent" | "multiply";
+  valueLabel: string;
+};
+
+type SavedInvoice = {
+  id: string;
+  created_at: string;
+  project_name: string | null;
+  client_name: string | null;
+  client_address: string | null;
+  client_number: string | null;
+  project_number: string | null;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  hst_rate: number | null;
+  company_name: string | null;
+  company_address: string | null;
+  company_phone: string | null;
+  third_column_header: string | null;
+  line_items: any[] | null;
+  subtotal: number | null;
+  hst_amount: number | null;
+  total_with_tax: number | null;
 };
 
 export default function Home() {
@@ -29,17 +52,31 @@ export default function Home() {
   );
   const [companyPhone, setCompanyPhone] = useState("6474684321");
 
+  const [thirdColumnHeader, setThirdColumnHeader] = useState("Unit");
+
   const [lineItems, setLineItems] = useState<LineItem[]>([
-    { description: "Project initiation", total: "", percent: "" },
+    {
+      description: "Project initiation",
+      total: "",
+      value: "",
+      calcType: "percent",
+      valueLabel: "Unit",
+    },
     {
       description: "Stormwater Management Report",
       total: "28000",
-      percent: "25",
+      value: "25",
+      calcType: "percent",
+      valueLabel: "Unit",
     },
   ]);
 
   const [saveMessage, setSaveMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+
+  const [savedInvoices, setSavedInvoices] = useState<SavedInvoice[]>([]);
+  const [isLoadingInvoices, setIsLoadingInvoices] = useState(false);
+  const [loadMessage, setLoadMessage] = useState("");
 
   const handleLineItemChange = (
     index: number,
@@ -47,31 +84,52 @@ export default function Home() {
     value: string
   ) => {
     const updated = [...lineItems];
-    updated[index][field] = value;
+    updated[index][field] = value as never;
     setLineItems(updated);
   };
 
   const addLineItem = () => {
-    setLineItems([...lineItems, { description: "", total: "", percent: "" }]);
+    setLineItems([
+      ...lineItems,
+      {
+        description: "",
+        total: "",
+        value: "",
+        calcType: "percent",
+        valueLabel: thirdColumnHeader || "Unit",
+      },
+    ]);
   };
 
   const deleteLineItem = (index: number) => {
     const updated = lineItems.filter((_, i) => i !== index);
     setLineItems(
-      updated.length ? updated : [{ description: "", total: "", percent: "" }]
+      updated.length
+        ? updated
+        : [
+            {
+              description: "",
+              total: "",
+              value: "",
+              calcType: "percent",
+              valueLabel: thirdColumnHeader || "Unit",
+            },
+          ]
     );
   };
 
   const calculatedItems = useMemo(() => {
     return lineItems.map((item) => {
       const total = Number(item.total) || 0;
-      const percent = Number(item.percent) || 0;
-      const amount = total * (percent / 100);
+      const value = Number(item.value) || 0;
+
+      const amount =
+        item.calcType === "percent" ? total * (value / 100) : total * value;
 
       return {
         ...item,
         totalNumber: total,
-        percentNumber: percent,
+        valueNumber: value,
         amountNumber: amount,
       };
     });
@@ -95,35 +153,109 @@ export default function Home() {
       maximumFractionDigits: 2,
     });
 
+  const loadSavedInvoices = async () => {
+    try {
+      setIsLoadingInvoices(true);
+      setLoadMessage("");
+
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Load invoices failed:", error);
+        setLoadMessage("Failed to load saved invoices.");
+        return;
+      }
+
+      setSavedInvoices(data || []);
+    } catch (error) {
+      console.error("Unexpected load error:", error);
+      setLoadMessage("Unexpected error while loading invoices.");
+    } finally {
+      setIsLoadingInvoices(false);
+    }
+  };
+
+  useEffect(() => {
+    loadSavedInvoices();
+  }, []);
+
+  const loadInvoiceIntoForm = (invoice: SavedInvoice) => {
+    setProjectName(invoice.project_name || "");
+    setClientName(invoice.client_name || "");
+    setClientAddress(invoice.client_address || "");
+    setClientNumber(invoice.client_number || "");
+    setProjectNumber(invoice.project_number || "");
+    setInvoiceNumber(invoice.invoice_number || "");
+    setInvoiceDate(invoice.invoice_date || "");
+    setHstRate(String(invoice.hst_rate ?? 13));
+    setCompanyName(invoice.company_name || "");
+    setCompanyAddress(invoice.company_address || "");
+    setCompanyPhone(invoice.company_phone || "");
+    setThirdColumnHeader(invoice.third_column_header || "Unit");
+
+    const loadedItems =
+      invoice.line_items && invoice.line_items.length
+        ? invoice.line_items.map((item: any) => ({
+            description: item.description || "",
+            total: String(item.total ?? ""),
+            value: String(item.value ?? item.percent ?? ""),
+            calcType:
+              item.calcType === "multiply" ? "multiply" : "percent",
+            valueLabel:
+              item.valueLabel ||
+              item.label ||
+              invoice.third_column_header ||
+              "Unit",
+          }))
+        : [
+            {
+              description: "",
+              total: "",
+              value: "",
+              calcType: "percent" as const,
+              valueLabel: invoice.third_column_header || "Unit",
+            },
+          ];
+
+    setLineItems(loadedItems);
+    setLoadMessage(`Loaded invoice ${invoice.invoice_number || ""}.`);
+  };
+
   const saveInvoice = async () => {
     try {
       setIsSaving(true);
       setSaveMessage("");
 
-      const { error } = await supabase.from("invoices").insert([
-        {
-          project_name: projectName,
-          client_name: clientName,
-          client_address: clientAddress,
-          client_number: clientNumber,
-          project_number: projectNumber,
-          invoice_number: invoiceNumber,
-          invoice_date: invoiceDate,
-          hst_rate: Number(hstRate) || 0,
-          company_name: companyName,
-          company_address: companyAddress,
-          company_phone: companyPhone,
-          line_items: calculatedItems.map((item) => ({
-            description: item.description,
-            total: item.totalNumber,
-            percent: item.percentNumber,
-            amount: item.amountNumber,
-          })),
-          subtotal,
-          hst_amount: hstAmount,
-          total_with_tax: totalWithTax,
-        },
-      ]);
+      const payload = {
+        project_name: projectName,
+        client_name: clientName,
+        client_address: clientAddress,
+        client_number: clientNumber,
+        project_number: projectNumber,
+        invoice_number: invoiceNumber,
+        invoice_date: invoiceDate,
+        hst_rate: Number(hstRate) || 0,
+        company_name: companyName,
+        company_address: companyAddress,
+        company_phone: companyPhone,
+        third_column_header: thirdColumnHeader,
+        line_items: calculatedItems.map((item) => ({
+          description: item.description,
+          total: item.totalNumber,
+          value: item.valueNumber,
+          calcType: item.calcType,
+          valueLabel: item.valueLabel,
+          amount: item.amountNumber,
+        })),
+        subtotal,
+        hst_amount: hstAmount,
+        total_with_tax: totalWithTax,
+      };
+
+      const { error } = await supabase.from("invoices").insert([payload]);
 
       if (error) {
         console.error("Save failed:", error);
@@ -132,6 +264,7 @@ export default function Home() {
       }
 
       setSaveMessage("Invoice saved successfully.");
+      await loadSavedInvoices();
     } catch (error) {
       console.error("Unexpected save error:", error);
       setSaveMessage("Unexpected error while saving.");
@@ -184,7 +317,66 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-gray-100 p-6">
-      <div className="mx-auto grid max-w-[1600px] gap-6 lg:grid-cols-[430px_1fr]">
+      <div className="mx-auto grid max-w-[1800px] gap-6 lg:grid-cols-[340px_430px_1fr]">
+        <section className="rounded-2xl border border-gray-300 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-bold">Saved Invoices</h2>
+              <p className="text-sm text-gray-600">
+                Load previous invoices into the form
+              </p>
+            </div>
+            <button
+              onClick={loadSavedInvoices}
+              className="rounded bg-gray-800 px-3 py-2 text-sm font-semibold text-white"
+            >
+              Refresh
+            </button>
+          </div>
+
+          {isLoadingInvoices && (
+            <p className="mb-3 text-sm text-gray-600">Loading invoices...</p>
+          )}
+
+          {loadMessage && (
+            <p className="mb-3 text-sm font-medium text-gray-700">{loadMessage}</p>
+          )}
+
+          <div className="max-h-[780px] space-y-3 overflow-y-auto pr-1">
+            {savedInvoices.length === 0 ? (
+              <div className="rounded border border-dashed border-gray-300 p-4 text-sm text-gray-500">
+                No saved invoices yet.
+              </div>
+            ) : (
+              savedInvoices.map((invoice) => (
+                <div
+                  key={invoice.id}
+                  className="rounded-lg border border-gray-300 p-3"
+                >
+                  <div className="font-semibold">
+                    {invoice.invoice_number || "No invoice #"}
+                  </div>
+                  <div className="text-sm text-gray-700">
+                    {invoice.client_name || "No client"}
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {invoice.invoice_date || ""}
+                  </div>
+                  <div className="mt-2 text-sm text-gray-500">
+                    {invoice.project_name || ""}
+                  </div>
+                  <button
+                    onClick={() => loadInvoiceIntoForm(invoice)}
+                    className="mt-3 rounded bg-blue-600 px-3 py-2 text-sm font-semibold text-white"
+                  >
+                    Load
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
         <section className="rounded-2xl border border-gray-300 bg-white p-5 shadow-sm">
           <h1 className="mb-2 text-2xl font-bold">Mo Project Controls</h1>
           <p className="mb-5 text-sm text-gray-600">
@@ -271,6 +463,13 @@ export default function Home() {
               placeholder="Company Phone"
             />
 
+            <input
+              className="rounded border border-gray-400 p-3"
+              value={thirdColumnHeader}
+              onChange={(e) => setThirdColumnHeader(e.target.value)}
+              placeholder="Third column header (e.g. Unit, Hours)"
+            />
+
             <h2 className="mt-3 text-lg font-semibold">Line Items</h2>
 
             {lineItems.map((item, index) => (
@@ -293,22 +492,48 @@ export default function Home() {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
+                <div className="mb-2 grid grid-cols-2 gap-2">
                   <input
                     className="rounded border border-gray-400 p-2"
                     value={item.total}
                     onChange={(e) =>
                       handleLineItemChange(index, "total", e.target.value)
                     }
-                    placeholder="Total"
+                    placeholder="Total or hourly rate"
                   />
                   <input
                     className="rounded border border-gray-400 p-2"
-                    value={item.percent}
+                    value={item.value}
                     onChange={(e) =>
-                      handleLineItemChange(index, "percent", e.target.value)
+                      handleLineItemChange(index, "value", e.target.value)
                     }
-                    placeholder="% of total"
+                    placeholder="Percent, hours, qty"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    className="rounded border border-gray-400 p-2"
+                    value={item.calcType}
+                    onChange={(e) =>
+                      handleLineItemChange(
+                        index,
+                        "calcType",
+                        e.target.value as "percent" | "multiply"
+                      )
+                    }
+                  >
+                    <option value="percent">Percent</option>
+                    <option value="multiply">Multiply</option>
+                  </select>
+
+                  <input
+                    className="rounded border border-gray-400 p-2"
+                    value={item.valueLabel}
+                    onChange={(e) =>
+                      handleLineItemChange(index, "valueLabel", e.target.value)
+                    }
+                    placeholder="Label e.g. Unit, Hours"
                   />
                 </div>
               </div>
@@ -512,7 +737,7 @@ export default function Home() {
                       width: "12%",
                     }}
                   >
-                    % of total
+                    {thirdColumnHeader}
                   </th>
                   <th
                     style={{
@@ -560,7 +785,11 @@ export default function Home() {
                         verticalAlign: "top",
                       }}
                     >
-                      {item.percentNumber > 0 ? `${item.percentNumber}%` : ""}
+                      {item.valueNumber > 0
+                        ? item.calcType === "percent"
+                          ? `${item.valueNumber}%`
+                          : `${item.valueNumber}`
+                        : ""}
                     </td>
                     <td
                       style={{
