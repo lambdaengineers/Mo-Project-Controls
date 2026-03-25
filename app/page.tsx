@@ -433,24 +433,24 @@ export default function Home() {
     }
 
     if (Array.isArray(raw)) {
-      const oldManual = raw.length
-        ? raw.map((item: any) => ({
-            description: item.description || "",
-            total: String(item.total ?? ""),
-            value: String(item.value ?? item.percent ?? ""),
-            calcType:
-              item.calcType === "multiply"
-                ? "multiply"
-                : item.calcType === "fixed"
-                ? "fixed"
-                : "percent",
-            valueLabel:
-              item.valueLabel ||
-              item.label ||
-              invoice.third_column_header ||
-              "% of total",
-          }))
-        : [{ ...EMPTY_MANUAL_ITEM }];
+      const oldManual: ManualInvoiceItem[] = raw.length
+  ? raw.map((item: any): ManualInvoiceItem => ({
+      description: item.description || "",
+      total: String(item.total ?? ""),
+      value: String(item.value ?? item.percent ?? ""),
+      calcType:
+        item.calcType === "multiply"
+          ? "multiply"
+          : item.calcType === "fixed"
+          ? "fixed"
+          : "percent",
+      valueLabel:
+        item.valueLabel ||
+        item.label ||
+        invoice.third_column_header ||
+        "% of total",
+    }))
+  : [{ ...EMPTY_MANUAL_ITEM }];
 
       setManualInvoiceItems(oldManual);
       setProgressItems([{ ...EMPTY_PROGRESS_ITEM }]);
