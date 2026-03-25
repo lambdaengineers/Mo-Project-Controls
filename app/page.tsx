@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
+import { supabase } from "../lib/supabase";
 
 type LineItem = {
   description: string;
@@ -37,6 +38,9 @@ export default function Home() {
     },
   ]);
 
+  const [saveMessage, setSaveMessage] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
   const handleLineItemChange = (
     index: number,
     field: keyof LineItem,
@@ -53,7 +57,9 @@ export default function Home() {
 
   const deleteLineItem = (index: number) => {
     const updated = lineItems.filter((_, i) => i !== index);
-    setLineItems(updated.length ? updated : [{ description: "", total: "", percent: "" }]);
+    setLineItems(
+      updated.length ? updated : [{ description: "", total: "", percent: "" }]
+    );
   };
 
   const calculatedItems = useMemo(() => {
@@ -88,6 +94,51 @@ export default function Home() {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
+
+  const saveInvoice = async () => {
+    try {
+      setIsSaving(true);
+      setSaveMessage("");
+
+      const { error } = await supabase.from("invoices").insert([
+        {
+          project_name: projectName,
+          client_name: clientName,
+          client_address: clientAddress,
+          client_number: clientNumber,
+          project_number: projectNumber,
+          invoice_number: invoiceNumber,
+          invoice_date: invoiceDate,
+          hst_rate: Number(hstRate) || 0,
+          company_name: companyName,
+          company_address: companyAddress,
+          company_phone: companyPhone,
+          line_items: calculatedItems.map((item) => ({
+            description: item.description,
+            total: item.totalNumber,
+            percent: item.percentNumber,
+            amount: item.amountNumber,
+          })),
+          subtotal,
+          hst_amount: hstAmount,
+          total_with_tax: totalWithTax,
+        },
+      ]);
+
+      if (error) {
+        console.error("Save failed:", error);
+        setSaveMessage("Save failed.");
+        return;
+      }
+
+      setSaveMessage("Invoice saved successfully.");
+    } catch (error) {
+      console.error("Unexpected save error:", error);
+      setSaveMessage("Unexpected error while saving.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const downloadPDF = async () => {
     try {
@@ -133,7 +184,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-gray-100 p-6">
-      <div className="mx-auto max-w-[1600px] grid gap-6 lg:grid-cols-[430px_1fr]">
+      <div className="mx-auto grid max-w-[1600px] gap-6 lg:grid-cols-[430px_1fr]">
         <section className="rounded-2xl border border-gray-300 bg-white p-5 shadow-sm">
           <h1 className="mb-2 text-2xl font-bold">Mo Project Controls</h1>
           <p className="mb-5 text-sm text-gray-600">
@@ -273,13 +324,27 @@ export default function Home() {
         </section>
 
         <div>
-          <div className="mb-4">
+          <div className="mb-4 flex items-center gap-3">
+            <button
+              onClick={saveInvoice}
+              disabled={isSaving}
+              className="rounded bg-blue-600 px-4 py-3 font-semibold text-white disabled:opacity-60"
+            >
+              {isSaving ? "Saving..." : "Save Invoice"}
+            </button>
+
             <button
               onClick={downloadPDF}
               className="rounded bg-green-600 px-4 py-3 font-semibold text-white"
             >
               Download PDF
             </button>
+
+            {saveMessage && (
+              <span className="text-sm font-medium text-gray-700">
+                {saveMessage}
+              </span>
+            )}
           </div>
 
           <section
@@ -388,11 +453,15 @@ export default function Home() {
               >
                 ZHR#&nbsp; {projectNumber} &nbsp;&nbsp;&nbsp; {projectName}
               </div>
-              <div style={{ padding: "10px 12px", borderRight: "1px solid #999" }}>
+              <div
+                style={{ padding: "10px 12px", borderRight: "1px solid #999" }}
+              >
                 <div style={{ fontWeight: 700 }}>Client #</div>
                 <div style={{ marginTop: "6px" }}>{clientNumber}</div>
               </div>
-              <div style={{ padding: "10px 12px", borderRight: "1px solid #999" }}>
+              <div
+                style={{ padding: "10px 12px", borderRight: "1px solid #999" }}
+              >
                 <div style={{ fontWeight: 700 }}>Date</div>
                 <div style={{ marginTop: "6px" }}>{invoiceDate}</div>
               </div>
@@ -501,7 +570,9 @@ export default function Home() {
                         verticalAlign: "top",
                       }}
                     >
-                      {item.amountNumber > 0 ? `$${money(item.amountNumber)}` : ""}
+                      {item.amountNumber > 0
+                        ? `$${money(item.amountNumber)}`
+                        : ""}
                     </td>
                   </tr>
                 ))}
