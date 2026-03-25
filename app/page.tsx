@@ -203,7 +203,7 @@ export default function Home() {
             total: String(item.total ?? ""),
             value: String(item.value ?? item.percent ?? ""),
             calcType:
-              item.calcType === "multiply" ? "multiply" : "percent",
+              (item.calcType === "multiply" ? "multiply" : "percent") as "percent" | "multiply",
             valueLabel:
               item.valueLabel ||
               item.label ||
